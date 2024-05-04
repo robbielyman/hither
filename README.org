@@ -1,0 +1,9 @@
+* hither
+
+hither is a little Forth;
+a stack-based language using “reverse Polish notation” for input.
+
+requires Zig version 0.12.0 (and not later)
+but has otherwise no dependencies.
+
+at the moment very little is implemented.
