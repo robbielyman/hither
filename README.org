@@ -7,3 +7,37 @@ requires Zig version 0.12.0 (and not later)
 but has otherwise no dependencies.
 
 at the moment very little is implemented.
+
+with zig on your $PATH, you can do =zig build run= in the project root to play around with the interpreter.
+
+for example
+
+#+begin_src
+type some hither code!
+> 4 "x" name
+ok
+#+end_src
+
+creates a variable named x with value 4.
+“ok” is hither’s way of telling you that
+your code ran without errors;
+if you don’t get “ok” or an error message,
+that means the interpreter thinks your code is incomplete.
+
+you can now reference your variable
+
+#+begin_src
+> x
+4
+ok
+#+end_src
+
+and reassign it
+
+#+begin_src
+> x 3.0 / x =
+ok
+> x
+1.33333333333333333
+ok
+#+end_src
