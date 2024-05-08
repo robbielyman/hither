@@ -15,6 +15,34 @@ pub const Cell = union(enum) {
         length: u32,
     },
     machine: *const fn (*Stack) Error!void,
+
+    pub fn eqlShallow(a: Cell, b: Cell) bool {
+        if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+        return switch (a) {
+            .len => |l| l.length == b.len.length,
+            .utf8 => |u| u == b.utf8,
+            .integer => |i| i == b.integer,
+            .number => |n| n == b.number,
+            .addr => |l| l.address == b.addr.address,
+            .slice => |s| s.address == b.slice.address and s.length == b.slice.length,
+            .machine => |m| m == b.machine,
+        };
+    }
+
+    pub fn format(cell: Cell, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (cell) {
+            .len => |c| try writer.print("length: {d}", .{c.length}),
+            .utf8 => |c| {
+                const chars: [8]u8 = @bitCast(c);
+                try writer.writeAll(&chars);
+            },
+            .integer => |c| try writer.print("{d}", .{c}),
+            .number => |c| try writer.print("{d}", .{c}),
+            .addr => |c| try writer.print("address: 0x{x}", .{c.address}),
+            .slice => |c| try writer.print("address: 0x{x}, length: {d}", .{ c.address, c.length }),
+            .machine => |c| try writer.print("function: 0x{x}", .{@intFromPtr(c)}),
+        }
+    }
 };
 
 pub const Error = error{ BadArguments, StackOverflow, MathOverflow, DivisionByZero };

@@ -4,6 +4,23 @@ stack: Stack,
 pad: *[pad_length]u8,
 pad_idx: usize = 0,
 msg: []const u8 = "",
+lambda_idx: u16 = 0,
+mode: enum { shallow, deep } = .deep,
+
+pub fn nextLambdaName(stack: *Stack, buffer: []u8) []const u8 {
+    const hither: *Hither = @fieldParentPtr("stack", stack);
+    const ret = std.fmt.bufPrint(buffer, "_lmb{x:0>4}", .{hither.lambda_idx}) catch unreachable;
+    hither.lambda_idx += 1;
+    return ret;
+}
+
+test "formatting" {
+    var buf: [16]u8 = undefined;
+    const ret = try std.fmt.bufPrint(&buf, "_lmb{x:0>4}", .{0});
+    try std.testing.expectEqualStrings("_lmb0000", ret);
+    const ret2 = try std.fmt.bufPrint(&buf, "_lmb{x:0>4}", .{0xdead});
+    try std.testing.expectEqualStrings("_lmbdead", ret2);
+}
 
 pub fn init(buffer: []align(@alignOf(Cell)) u8) error{StackTooSmall}!Hither {
     var self: Hither = .{ .stack = Stack.init(buffer), .pad = undefined };
@@ -15,8 +32,8 @@ pub fn init(buffer: []align(@alignOf(Cell)) u8) error{StackTooSmall}!Hither {
         const Fn = @field(lib, decl.name);
         const prev = self.stack.here;
         addAtHere(&self.stack, .{ .machine = Fn }) catch return error.StackTooSmall;
-        addAtHere(&self.stack, .{ .addr = .{ .address = @intCast(prev) } }) catch return error.StackTooSmall;
-        try addNameToDictionary(&self.stack, name);
+        addAtHere(&self.stack, .{ .addr = .{ .address = @intCast(prev -| 1) } }) catch return error.StackTooSmall;
+        try addUtf8ToDictionary(&self.stack, name);
     }
     self.pad = &self.stack.bytes[self.stack.here * 8 + pad ..][0..pad_length].*;
     return self;
@@ -33,7 +50,7 @@ pub fn setMsgFmt(self: *Hither, comptime fmt: []const u8, args: anytype) []const
 pub fn parse(self: *Hither, stream: anytype) Result {
     const input = stream.readUntilDelimiterOrEof(self.pad[self.pad_idx..], '\n') catch |err| {
         if (err == error.EndOfStream) return .quit;
-        self.msg = setMsgFmt(self, "parse error: {s}", .{@errorName(err)});
+        self.msg = setMsgFmt(self, "read error: {s}", .{@errorName(err)});
         return .err;
     } orelse return .quit;
     if (std.mem.startsWith(u8, input, "quit")) return .quit;
@@ -74,14 +91,15 @@ pub fn sliceFromSlice(self: *Hither, cell: Cell) Error![]const u8 {
     return self.pad[cell.slice.address..][0..cell.slice.length];
 }
 
-fn lookUpWord(stack: *Stack, token: []const u8) !Cell {
+pub fn lookUpWord(stack: *Stack, token: []const u8) !Cell {
     const len = try std.math.divCeil(usize, token.len, 8);
     if (len > 255) return error.WordTooLong;
     var iterator = iterateDictionary(stack);
     while (iterator.next()) |entry| {
         if (len != entry.name_len) continue;
-        if (!entry.match(token)) continue;
-        return .{ .addr = .{ .address = entry.address - (entry.name_len + 2) } };
+        if (!entry.match(stack, token)) continue;
+        // std.debug.print("{}\n", .{stack.get(entry.address - (entry.name_len + 1))});
+        return .{ .addr = .{ .address = entry.address - (entry.name_len + 1) } };
     }
     return error.NotFound;
 }
@@ -92,33 +110,31 @@ const DictionaryIterator = struct {
 
     fn next(self: *DictionaryIterator) ?Entry {
         const curr = self.current orelse return null;
-        const ptr = curr.name_ptr - curr.name_len;
-        const data: Cell = Stack.Elem.toCell(.addr, ptr[0]);
+        const ptr = curr.address - curr.name_len;
+        const data = self.stack.get(ptr);
         if (data.addr.address == 0) {
             self.current = null;
             return curr;
         }
-        const slice = self.stack.slice();
-        const new_ptr: [*]Stack.Elem.Bare = slice.items(.data)[data.addr.address..].ptr;
+        // std.debug.print("next addr: 0x{x}\n", .{data.addr.address});
+        const new_ptr = self.stack.get(data.addr.address);
         self.current = .{
-            .name_len = Stack.Elem.toCell(.len, new_ptr[0]).len.length,
-            .name_ptr = new_ptr - 1,
-            .address = data.addr.address,
+            .name_len = new_ptr.len.length,
+            .address = data.addr.address -| 1,
         };
         return curr;
     }
 
     const Entry = struct {
         name_len: u8,
-        name_ptr: [*]Stack.Elem.Bare,
         address: u32,
 
-        fn match(self: Entry, word: []const u8) bool {
+        fn match(self: Entry, stack: *const Stack, word: []const u8) bool {
             var idx: usize = 0;
-            var name_ptr = self.name_ptr;
+            var name_ptr = self.address;
             while (idx < word.len) : (idx += 8) {
-                const data = name_ptr[0].utf8;
-                const haystack: *const [8]u8 = @ptrCast(&data);
+                const data = stack.get(name_ptr);
+                const haystack: *const [8]u8 = @ptrCast(&data.utf8);
                 const needle = word[idx..][0..@min(8, word[idx..].len)];
                 if (!std.mem.startsWith(u8, haystack, needle)) return false;
                 name_ptr -= 1;
@@ -129,57 +145,38 @@ const DictionaryIterator = struct {
 };
 
 fn iterateDictionary(stack: *const Stack) DictionaryIterator {
-    const slice = stack.*.slice().items(.data);
     return .{ .stack = stack, .current = .{
-        .name_len = slice[stack.here].len.length,
-        .name_ptr = slice[stack.here..].ptr - 1,
-        .address = @intCast(stack.here),
+        .name_len = stack.get(stack.here - 1).len.length,
+        .address = @intCast(stack.here - 2),
     } };
 }
 
 pub const Result = enum { err, ok, quit, incomplete };
 
 pub fn tick(self: *Hither) Result {
-    while (self.stack.stack_ptr != self.stack.capacity) {
-        const cell = pop(&self.stack).?;
-        switch (cell) {
-            .machine => |m| {
-                m(&self.stack) catch |err| {
-                    switch (err) {
-                        error.BadArguments => self.msg = "bad arguments!",
-                        error.DivisionByZero => self.msg = "division by zero!",
-                        error.MathOverflow => self.msg = "math operation overflow!",
-                        error.StackOverflow => self.msg = "stack overflow!",
-                    }
-                    return .err;
-                };
-            },
-            .addr => |a| {
-                var addr = a.address;
-                while (addr > 0) : (addr -= 1) {
-                    const c = self.stack.get(addr);
-                    if (c == .len) break;
-                    push(&self.stack, c) catch {
-                        self.msg = "stack overflow!";
-                        return .err;
-                    };
-                }
-            },
-            .len => {
-                self.msg = "bad stack state!";
-                return .err;
-            },
-            else => {
-                if (self.stack.stack_ptr != self.stack.capacity) {
-                    push(&self.stack, cell) catch unreachable;
-                    return .incomplete;
-                }
-                self.msg = self.setMessage(cell) catch "unable to print!";
-                return .ok;
-            },
+    const cell = (pop(&self.stack) catch |err| {
+        switch (err) {
+            error.BadArguments => self.msg = "bad arguments!",
+            error.DivisionByZero => self.msg = "division by zero!",
+            error.MathOverflow => self.msg = "math operation overflow!",
+            error.StackOverflow => self.msg = "stack overflow!",
         }
+        return .err;
+    }) orelse return .ok;
+    switch (cell) {
+        .len => {
+            self.msg = "bad stack state!";
+            return .err;
+        },
+        else => {
+            if (self.stack.stack_ptr != self.stack.capacity) {
+                push(&self.stack, cell) catch unreachable;
+                return .incomplete;
+            }
+            self.msg = self.setMessage(cell) catch "unable to print!";
+            return .ok;
+        },
     }
-    return .ok;
 }
 
 fn setMessage(self: *Hither, cell: Cell) ![]const u8 {
@@ -201,8 +198,10 @@ fn setMessage(self: *Hither, cell: Cell) ![]const u8 {
 
 pub fn flush(self: *Hither) void {
     self.stack.stack_ptr = self.stack.capacity;
-    self.pad_idx = 0;
     self.msg = "";
+    const old_pad = self.pad;
+    self.pad = &self.stack.bytes[self.stack.here * 8 + pad ..][0..pad_length].*;
+    std.mem.copyBackwards(u8, self.pad, old_pad);
 }
 
 const wordToFnMap = std.ComptimeStringMap([]const u8, .{
@@ -213,9 +212,13 @@ const wordToFnMap = std.ComptimeStringMap([]const u8, .{
     .{ "variable", "name" },
     .{ "call", "call" },
     .{ "assign", "=" },
+    .{ "lambdaEnd", "{" },
+    .{ "lambda", "}" },
+    .{ "macro", "%" },
+    .{ "addrOf", "'" },
 });
 
-pub fn addNameToDictionary(stack: *Stack, utf8name: []const u8) error{StackTooSmall}!void {
+pub fn addUtf8ToDictionary(stack: *Stack, utf8name: []const u8) error{StackTooSmall}!void {
     const block_len: u8 = @intCast(std.math.divCeil(usize, utf8name.len, 8) catch unreachable);
     const rem: u3 = @intCast(utf8name.len % 8);
     const len: Cell = .{ .len = .{ .length = block_len } };
@@ -227,7 +230,8 @@ pub fn addNameToDictionary(stack: *Stack, utf8name: []const u8) error{StackTooSm
         addAtHere(stack, last) catch return error.StackTooSmall;
         idx -= rem;
     }
-    while (idx > 8) : (idx -= 8) {
+    while (idx >= 8) {
+        idx -= 8;
         const utf8: Cell = .{ .utf8 = @bitCast(utf8name[idx..][0..8].*) };
         addAtHere(stack, utf8) catch return error.StackTooSmall;
     }
@@ -236,26 +240,24 @@ pub fn addNameToDictionary(stack: *Stack, utf8name: []const u8) error{StackTooSm
 
 pub fn addAtHere(stack: *Stack, cell: Cell) error{StackOverflow}!void {
     try roomAbove(stack, 1);
-    stack.here += 1;
     stack.set(stack.here, cell);
+    stack.here += 1;
 }
 
-pub fn pop(stack: *Stack) ?Cell {
+// resolves according to stack.mode
+pub fn pop(stack: *Stack) Error!?Cell {
+    const hither: *Hither = @fieldParentPtr("stack", stack);
+    defer hither.mode = .deep;
     if (stack.stack_ptr == stack.capacity) return null;
-    const res = stack.get(stack.stack_ptr);
+    var res = stack.get(stack.stack_ptr);
     stack.stack_ptr += 1;
-    return res;
-}
-
-pub fn resolve(stack: *Stack) Error!?Cell {
-    while (true) {
-        if (stack.stack_ptr == stack.capacity) return null;
-        const res = stack.get(stack.stack_ptr);
-        stack.stack_ptr += 1;
+    while (hither.mode == .deep) {
         switch (res) {
             .machine => |m| {
                 try m(stack);
-                continue;
+                if (stack.stack_ptr == stack.capacity) return null;
+                res = stack.get(stack.stack_ptr);
+                stack.stack_ptr += 1;
             },
             .addr => |a| {
                 var addr = a.address;
@@ -264,12 +266,14 @@ pub fn resolve(stack: *Stack) Error!?Cell {
                     if (cell == .len) break;
                     try push(stack, cell);
                 }
-                continue;
+                if (stack.stack_ptr == stack.capacity) return null;
+                res = stack.get(stack.stack_ptr);
+                stack.stack_ptr += 1;
             },
-            else => {},
+            else => break,
         }
-        return res;
     }
+    return res;
 }
 
 /// idx is an index into the stack portion of the stack.
