@@ -29,7 +29,18 @@ pub const Cell = union(enum) {
         };
     }
 
-    pub fn format(cell: Cell, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(cell: Cell, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (std.mem.eql(u8, fmt, "t")) {
+            switch (cell) {
+                .len => try writer.writeAll("len: "),
+                .utf8 => try writer.writeAll("utf8: "),
+                .integer => try writer.writeAll("integer: "),
+                .number => try writer.writeAll("number: "),
+                .addr => try writer.writeAll("pointer: "),
+                .slice => try writer.writeAll("byte-string: "),
+                .machine => try writer.writeAll("builtin: "),
+            }
+        }
         switch (cell) {
             .len => |c| try writer.print("length: {d}", .{c.length}),
             .utf8 => |c| {

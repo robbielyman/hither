@@ -1,3 +1,37 @@
+const wordToFnMap = std.ComptimeStringMap([]const u8, .{
+    .{ "add", "+" },
+    .{ "subtract", "-" },
+    .{ "multiply", "*" },
+    .{ "divide", "/" },
+    .{ "variable", "name" },
+    .{ "call", "call" },
+    .{ "assign", ":=" },
+    .{ "lambdaEnd", "{" },
+    .{ "lambda", "}" },
+    .{ "macro", "%" },
+    .{ "addrOf", "'" },
+    .{ "ifEnd", "if" },
+    .{ "elseEnd", "else" },
+    .{ "then", "then" },
+    .{ "tombstone", "break" },
+    .{ "dupe", "dupe" },
+    .{ "swap", "swap" },
+    .{ "setTo", "top" },
+    .{ "equal", "==" },
+    .{ "whileFn", "while" },
+    .{ "andFn", "and" },
+    .{ "orFn", "or" },
+    .{ "notFn", "not" },
+    .{ "greater", ">" },
+    .{ "greaterEq", ">=" },
+    .{ "less", "<" },
+    .{ "lessEq", "<=" },
+    .{ "whileFn", "while" },
+    .{ "noop", "_" },
+    .{ "after", "," },
+    .{ "dump", "dump" },
+});
+
 const Hither = @This();
 
 stack: Stack,
@@ -53,6 +87,7 @@ pub fn parse(self: *Hither, stream: anytype) Result {
         self.msg = setMsgFmt(self, "read error: {s}", .{@errorName(err)});
         return .err;
     } orelse return .quit;
+    defer self.pad_idx += input.len;
     if (std.mem.startsWith(u8, input, "quit")) return .quit;
     var iterator = std.mem.tokenizeAny(u8, input, " \t\n\r()[]");
     while (iterator.next()) |token| {
@@ -136,7 +171,8 @@ const DictionaryIterator = struct {
                 const data = stack.get(name_ptr);
                 const haystack: *const [8]u8 = @ptrCast(&data.utf8);
                 const needle = word[idx..][0..@min(8, word[idx..].len)];
-                if (!std.mem.startsWith(u8, haystack, needle)) return false;
+                const slice: []const u8 = if (std.mem.indexOfScalar(u8, haystack, 0)) |n| haystack[0..n] else haystack;
+                if (!std.mem.eql(u8, slice, needle)) return false;
                 name_ptr -= 1;
             }
             return true;
@@ -184,15 +220,10 @@ fn setMessage(self: *Hither, cell: Cell) ![]const u8 {
     var stream = std.io.fixedBufferStream(slice);
     var writer = stream.writer();
     switch (cell) {
-        .integer => |i| try writer.print("{d}", .{i}),
-        .number => |f| try writer.print("{d}", .{f}),
-        // FIXME: print the bytes instead
         .slice => return sliceFromSlice(self, cell) catch unreachable,
-        .len => |l| try writer.print("{d}", .{l.length}),
-        .utf8 => |u| try writer.print("{s}", .{&@as([8]u8, @bitCast(u))}),
-        .addr => |a| try writer.print("addr: {d}", .{a.address}),
-        .machine => |m| try writer.print("function: {d}", .{@intFromPtr(m)}),
+        else => try writer.print("{}", .{cell}),
     }
+    self.pad_idx += stream.pos;
     return slice[0..stream.pos];
 }
 
@@ -203,20 +234,6 @@ pub fn flush(self: *Hither) void {
     self.pad = &self.stack.bytes[self.stack.here * 8 + pad ..][0..pad_length].*;
     std.mem.copyBackwards(u8, self.pad, old_pad);
 }
-
-const wordToFnMap = std.ComptimeStringMap([]const u8, .{
-    .{ "add", "+" },
-    .{ "subtract", "-" },
-    .{ "multiply", "*" },
-    .{ "divide", "/" },
-    .{ "variable", "name" },
-    .{ "call", "call" },
-    .{ "assign", "=" },
-    .{ "lambdaEnd", "{" },
-    .{ "lambda", "}" },
-    .{ "macro", "%" },
-    .{ "addrOf", "'" },
-});
 
 pub fn addUtf8ToDictionary(stack: *Stack, utf8name: []const u8) error{StackTooSmall}!void {
     const block_len: u8 = @intCast(std.math.divCeil(usize, utf8name.len, 8) catch unreachable);
@@ -250,6 +267,7 @@ pub fn pop(stack: *Stack) Error!?Cell {
     defer hither.mode = .deep;
     if (stack.stack_ptr == stack.capacity) return null;
     var res = stack.get(stack.stack_ptr);
+    // std.log.debug("popped {} in mode {s}", .{ res, @tagName(hither.mode) });
     stack.stack_ptr += 1;
     while (hither.mode == .deep) {
         switch (res) {
@@ -298,6 +316,7 @@ pub fn push(stack: *Stack, cell: Cell) error{StackOverflow}!void {
     try roomAbove(stack, 1);
     stack.stack_ptr -= 1;
     stack.set(stack.stack_ptr, cell);
+    // std.log.debug("pushed {}", .{cell});
 }
 
 pub fn roomAbove(stack: *const Stack, num_elems: usize) error{StackOverflow}!void {
