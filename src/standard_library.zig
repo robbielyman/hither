@@ -421,16 +421,15 @@ pub fn equal(stack: *Stack) Error!void {
 
 pub fn whileFn(stack: *Stack) Error!void {
     if (!h.checkDepth(stack, 1)) return error.BadArguments;
-    var cond = (try h.pop(stack)) orelse return error.BadArguments;
-    while (!cond.eqlShallow(.{ .integer = 0 })) {
-        if (!h.checkDepth(stack, 1)) return error.BadArguments;
-        try dupe(stack);
-        const duped = stack.stack_ptr;
-        stack.stack_ptr += 1;
-        cond = (try h.pop(stack)) orelse return error.BadArguments;
-        if (!cond.eqlShallow(.{ .integer = 0 })) {
-            stack.set(stack.stack_ptr, stack.get(duped));
-        }
+    const cond = (try h.pop(stack)) orelse return error.BadArguments;
+    if (!h.checkDepth(stack, 1)) return error.BadArguments;
+    const func = (try h.pop(stack)) orelse return error.BadArguments;
+    while (true) {
+        try h.push(stack, cond);
+        const cell = try h.pop(stack) orelse return error.BadArguments;
+        if (cell.eqlShallow(.{ .integer = 0 })) break;
+        try h.push(stack, func);
+        try call(stack);
     }
 }
 
