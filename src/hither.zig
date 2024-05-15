@@ -8,7 +8,7 @@ const wordToFnMap = std.ComptimeStringMap([]const u8, .{
     .{ "assign", ":=" },
     .{ "lambdaEnd", "{" },
     .{ "lambda", "}" },
-    .{ "macro", "%" },
+    .{ "macro", "$" },
     .{ "addrOf", "'" },
     .{ "ifEnd", "if" },
     .{ "elseEnd", "else" },
@@ -30,6 +30,10 @@ const wordToFnMap = std.ComptimeStringMap([]const u8, .{
     .{ "noop", "_" },
     .{ "after", "," },
     .{ "dump", "dump" },
+    .{ "print", "print" },
+    .{ "modulo", "%" },
+    .{ "join", "++" },
+    .{ "heightIs", "height" },
 });
 
 const Hither = @This();
@@ -40,6 +44,7 @@ pad_idx: usize = 0,
 msg: []const u8 = "",
 lambda_idx: u16 = 0,
 mode: enum { shallow, deep } = .deep,
+writer: ?std.io.AnyWriter = null,
 
 pub fn nextLambdaName(stack: *Stack, buffer: []u8) []const u8 {
     const hither: *Hither = @fieldParentPtr("stack", stack);
@@ -196,6 +201,8 @@ pub fn tick(self: *Hither) Result {
             error.DivisionByZero => self.msg = "division by zero!",
             error.MathOverflow => self.msg = "math operation overflow!",
             error.StackOverflow => self.msg = "stack overflow!",
+            error.NotSupported => self.msg = "operation not supported!",
+            error.IOError => self.msg = "i/o error!",
         }
         return .err;
     }) orelse return .ok;

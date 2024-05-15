@@ -56,7 +56,7 @@ pub const Cell = union(enum) {
     }
 };
 
-pub const Error = error{ BadArguments, StackOverflow, MathOverflow, DivisionByZero };
+pub const Error = error{ BadArguments, StackOverflow, MathOverflow, DivisionByZero, NotSupported, IOError };
 
 pub const Stack = struct {
     bytes: [*]align(@alignOf(Cell)) u8 = undefined,

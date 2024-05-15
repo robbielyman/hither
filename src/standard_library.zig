@@ -4,6 +4,82 @@ pub fn ifEnd(_: *Stack) Error!void {}
 
 pub fn elseEnd(_: *Stack) Error!void {}
 
+pub fn modulo(stack: *Stack) Error!void {
+    if (!h.checkDepth(stack, 1)) return error.BadArguments;
+    const a = (try h.pop(stack)) orelse return error.BadArguments;
+    if (!h.checkDepth(stack, 1)) return error.BadArguments;
+    const b = (try h.pop(stack)) orelse return error.BadArguments;
+    const res_type = try h.mathCoerce(Elem.fromCell(a).tags, Elem.fromCell(b).tags);
+    const data: Cell = switch (res_type) {
+        .integer => .{ .integer = std.math.mod(i64, b.integer, a.integer) catch return error.BadArguments },
+        .number => number: {
+            const float_a = h.toNumber(a) catch unreachable;
+            const float_b = h.toNumber(b) catch unreachable;
+            break :number .{ .number = std.math.mod(f64, float_b, float_a) catch return error.BadArguments };
+        },
+        else => unreachable,
+    };
+    try h.push(stack, data);
+}
+
+pub fn join(stack: *Stack) Error!void {
+    const hither: *h = @fieldParentPtr("stack", stack);
+    const slice = hither.pad[hither.pad_idx..];
+    var stream = std.io.fixedBufferStream(slice);
+    var writer = stream.writer();
+    if (!h.checkDepth(stack, 1)) return error.BadArguments;
+    const a = (try h.pop(stack)) orelse return error.BadArguments;
+    if (!h.checkDepth(stack, 1)) return error.BadArguments;
+    const b = (try h.pop(stack)) orelse return error.BadArguments;
+    _ = err: {
+        const tojoin: []const Cell = &.{ b, a };
+        for (tojoin) |cell| {
+            switch (cell) {
+                .slice => {
+                    const string = hither.sliceFromSlice(cell) catch unreachable;
+                    if (string[0] == '"' and string[string.len - 1] == '"')
+                        writer.writeAll(string[1 .. string.len - 1]) catch |err| break :err err
+                    else
+                        writer.writeAll(string) catch |err| break :err err;
+                },
+                else => writer.print("{}", .{cell}) catch |err| break :err err,
+            }
+        }
+    } catch return error.StackOverflow;
+    try h.push(stack, .{ .slice = .{
+        .address = @intCast(hither.pad_idx),
+        .length = @intCast(stream.pos),
+    } });
+    hither.pad_idx += stream.pos;
+}
+
+pub fn print(stack: *Stack) Error!void {
+    const hither: *h = @fieldParentPtr("stack", stack);
+    const writer = hither.writer orelse return error.NotSupported;
+    var first = true;
+    _ = err: {
+        while (h.checkDepth(stack, 1)) {
+            if (!first) writer.writeAll("\t") catch |err| break :err err;
+            first = false;
+            const cell = (try h.pop(stack)) orelse continue;
+            switch (cell) {
+                .slice => {
+                    const string = hither.sliceFromSlice(cell) catch unreachable;
+                    if (string[0] == '"' and string[string.len - 1] == '"')
+                        writer.writeAll(string[1 .. string.len - 1]) catch |err| break :err err
+                    else
+                        writer.writeAll(string) catch |err| break :err err;
+                },
+                else => writer.print("{}", .{cell}) catch |err| break :err err,
+            }
+        }
+        writer.writeAll("\n") catch |err| break :err err;
+    } catch {
+        stack.stack_ptr = stack.capacity;
+        return error.IOError;
+    };
+}
+
 pub fn add(stack: *Stack) Error!void {
     if (!h.checkDepth(stack, 1)) return error.BadArguments;
     const a = (try h.pop(stack)) orelse return error.BadArguments;
@@ -318,6 +394,11 @@ pub fn swap(stack: *Stack) Error!void {
     const b = (try h.pop(stack)) orelse return error.BadArguments;
     try h.push(stack, a);
     try h.push(stack, b);
+}
+
+pub fn heightIs(stack: *Stack) Error!void {
+    const height: i64 = @intCast(stack.capacity - stack.stack_ptr);
+    try h.push(stack, .{ .integer = height });
 }
 
 pub fn setTo(stack: *Stack) Error!void {

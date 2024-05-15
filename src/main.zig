@@ -15,6 +15,7 @@ pub fn main() !void {
     defer allocator.free(buf);
 
     var stack = try hither.init(buf);
+    stack.writer = stdout.any();
 
     var quit = false;
     try stdout.print("type some hither code!\n", .{});
