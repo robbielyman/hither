@@ -11,42 +11,32 @@ pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
-    const buf = try allocator.alignedAlloc(u8, @alignOf(hither.Cell), 128 * 1024 * 1024);
-    defer allocator.free(buf);
 
-    var stack = try hither.init(buf);
-    stack.writer = stdout.any();
+    var stack = try hither.init(allocator, 1024, 1024, 1024 * 1024);
+    defer stack.deinit(allocator);
 
     var quit = false;
     try stdout.print("type some hither code!\n", .{});
     while (!quit) {
         try stdout.print("> ", .{});
         try bw.flush();
-        switch (stack.parse(stdin)) {
+        switch (stack.parse(stdin.any(), stdout.any())) {
             .err => {
                 defer stack.flush();
-                try stderr.print("error: {s}\n", .{stack.msg});
+                try stderr.print("{s}\n", .{stack.msg});
                 try stderr_buf.flush();
             },
             .quit => quit = true,
-            else => {},
-        }
-        if (quit) break;
-        switch (stack.tick()) {
-            .err => {
-                defer stack.flush();
-                try stderr.print("error: {s}\n", .{stack.msg});
-                try stderr_buf.flush();
-            },
             .ok => {
                 defer stack.flush();
-                if (stack.msg.len > 0)
-                    try stdout.print("{s}\n", .{stack.msg});
+                if (stack.stack.len != 0) try stack.printStack(stdout.any());
                 try stdout.print("ok\n", .{});
                 try bw.flush();
             },
-            .quit => quit = true,
-            .incomplete => {},
+            .incomplete => {
+                try stack.dumpState(stdout.any());
+                try bw.flush();
+            },
         }
     }
 }
