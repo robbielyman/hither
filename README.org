@@ -1,3 +1,5 @@
+development has moved to [sr.ht](https://git.sr.ht/~alanza/hither)
+
 * hither
 
 hither is a little Forth;
